@@ -134,12 +134,12 @@ func (m *darwinManager) Install(svc *store.Service) error {
 	<key>StandardErrorPath</key>
 	<string>%s</string>
 	<key>RunAtLoad</key>
-	<false/>
+	<%t/>
 	%s
 %s</dict>
 </plist>
 `, label(svc.Name), xmlEscape(svc.Command), xmlEscape(svc.WorkingDir),
-		xmlEscape(lp), xmlEscape(lp), keepAlive(svc.Restart), envXML.String())
+		xmlEscape(lp), xmlEscape(lp), svc.Enabled, keepAlive(svc.Restart), envXML.String())
 
 	if err := os.WriteFile(path, []byte(plist), 0644); err != nil {
 		return fmt.Errorf("failed to write plist: %w", err)
@@ -192,11 +192,12 @@ func (m *darwinManager) Stop(name string) error {
 }
 
 func (m *darwinManager) Restart(name string) error {
-	out, err := runCmd("launchctl", "kickstart", "-k", m.launchTarget(name))
+	// Reload the plist so edits apply to already loaded jobs.
+	path, err := m.plistPath(name)
 	if err != nil {
-		return fmt.Errorf("failed to restart service: %s: %w", out, err)
+		return err
 	}
-	return nil
+	return restartLaunchd(path, m.launchDomain(), m.launchTarget(name), runCmd)
 }
 
 func (m *darwinManager) Status(name string) (*Status, error) {

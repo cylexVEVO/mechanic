@@ -33,4 +33,16 @@ sudo mechanic --system tui
 
 On Linux, the active init system is detected automatically. Set `MECHANIC_INIT=systemd` or `MECHANIC_INIT=openrc` to override detection. OpenRC user services require OpenRC 0.60 or newer, an active OpenRC user session, and `XDG_RUNTIME_DIR`. For systemd user services that must survive logout, enable lingering with `loginctl enable-linger`.
 
-The TUI refreshes status automatically and covers the service-management features of the CLI. Press `c` to create a service, `enter` for detailed status, or `l` for the auto-refreshing log viewer. Use arrow keys or `j`/`k` to select a service, then `s` to start, `x` to stop, `R` to restart, `e` to toggle boot enablement, or `d` to remove it.
+The TUI refreshes status automatically and covers the service-management features of the CLI. Press `c` to create a service, `E` to edit the selected service, `enter` for detailed status, or `l` for the auto-refreshing log viewer. Use arrow keys or `j`/`k` to select a service, then `s` to start, `x` to stop, `R` to restart, `e` to toggle boot enablement, or `d` to remove it.
+
+## Editing services
+
+```sh
+mechanic edit worker --command 'python3 worker.py --verbose' --dir /path/to/app
+mechanic edit worker --env MODE=production --env PORT=8080 --restart-now
+mechanic edit worker --description '' --clear-env
+```
+
+Only supplied fields change. `--env` replaces the entire environment list; `--clear-env` removes it. Use `--restart always|on-failure|never` to change the restart policy. Service names, scope, and boot enablement are preserved. Add `--system` to edit a system service.
+
+Changes are saved without restarting by default. Restart the service to apply them to a running process, or pass `--restart-now`. In the TUI, press `E` from the dashboard or status view, edit the prefilled fields, optionally select **Restart now**, and press `ctrl+s` to save or `esc` to cancel. Environment entries containing commas must be quoted, for example `"VALUE=a,b",PORT=8080`.
