@@ -54,16 +54,18 @@ type tuiModel struct {
 }
 
 type tuiCreateForm struct {
-	editing     bool
-	field       int
-	name        string
-	command     string
-	description string
-	workingDir  string
-	env         string
-	restart     int
-	start       bool
-	err         string
+	editing         bool
+	field           int
+	name            string
+	command         string
+	description     string
+	workingDir      string
+	env             string
+	originalEnvText string
+	originalEnv     []string
+	restart         int
+	start           bool
+	err             string
 }
 
 var tuiRestartPolicies = []string{"on-failure", "always", "never"}
@@ -156,15 +158,9 @@ func loadTUILogs(name string, system bool) tea.Cmd {
 
 func runTUICreate(form tuiCreateForm, system bool) tea.Cmd {
 	return func() tea.Msg {
-		var env []string
-		if form.env != "" {
-			reader := csv.NewReader(strings.NewReader(form.env))
-			reader.TrimLeadingSpace = true
-			records, err := reader.ReadAll()
-			if err != nil || len(records) != 1 {
-				return tuiCreateMsg{edited: form.editing, err: fmt.Errorf("environment must be one comma-separated record; quote values containing commas")}
-			}
-			env = records[0]
+		env, err := form.environment()
+		if err != nil {
+			return tuiCreateMsg{edited: form.editing, err: err}
 		}
 		if form.editing {
 			st, err := store.NewForScope(system)
@@ -843,6 +839,8 @@ func (m *tuiModel) openEdit() {
 	}
 	form := tuiCreateForm{editing: true, field: 1, name: svc.Name, command: svc.Command,
 		description: svc.Description, workingDir: svc.WorkingDir, env: strings.TrimSuffix(env.String(), "\n")}
+	form.originalEnvText = form.env
+	form.originalEnv = append([]string(nil), svc.Env...)
 	for i, policy := range tuiRestartPolicies {
 		if policy == string(svc.Restart) {
 			form.restart = i
@@ -851,4 +849,21 @@ func (m *tuiModel) openEdit() {
 	m.createForm = form
 	m.creating, m.detailOpen = true, false
 	m.message = ""
+}
+
+// Keep untouched environment values byte-for-byte: CSV parsing normalizes CRLF.
+func (f tuiCreateForm) environment() ([]string, error) {
+	if f.editing && f.env == f.originalEnvText {
+		return append([]string(nil), f.originalEnv...), nil
+	}
+	if f.env == "" {
+		return nil, nil
+	}
+	reader := csv.NewReader(strings.NewReader(f.env))
+	reader.TrimLeadingSpace = true
+	records, err := reader.ReadAll()
+	if err != nil || len(records) != 1 {
+		return nil, fmt.Errorf("environment must be one comma-separated record; quote values containing commas")
+	}
+	return records[0], nil
 }

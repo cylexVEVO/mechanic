@@ -197,15 +197,7 @@ func (m *darwinManager) Restart(name string) error {
 	if err != nil {
 		return err
 	}
-	if _, err := runCmd("launchctl", "print", m.launchTarget(name)); err == nil {
-		if err := m.bootout(name); err != nil {
-			return err
-		}
-	}
-	if out, err := runCmd("launchctl", "bootstrap", m.launchDomain(), path); err != nil {
-		return fmt.Errorf("failed to reload service: %s: %w", out, err)
-	}
-	return m.Start(name)
+	return restartLaunchd(path, m.launchDomain(), m.launchTarget(name), runCmd)
 }
 
 func (m *darwinManager) Status(name string) (*Status, error) {

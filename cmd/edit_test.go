@@ -159,3 +159,36 @@ func TestEditCommandRequiresChanges(t *testing.T) {
 		t.Fatal("expected conflicting flags error")
 	}
 }
+
+func TestTUIEditPreservesUnchangedEnvironment(t *testing.T) {
+	_, svc := editFixture(t)
+	svc.Env = []string{"MULTILINE=first\r\nsecond\r\n", "CSV=a,b\"c", "EMPTY=", "SPACE= leading and trailing "}
+	m := tuiModel{rows: []tuiRow{{service: svc}}}
+	m.openEdit()
+	m.createForm.description = "new description"
+	env, err := m.createForm.environment()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(env, svc.Env) {
+		t.Fatalf("environment changed: got %q, want %q", env, svc.Env)
+	}
+	env[0] = "CHANGED=returned slice"
+	preserved, _ := m.createForm.environment()
+	if !reflect.DeepEqual(preserved, svc.Env) {
+		t.Fatal("returned environment aliases original values")
+	}
+	m.createForm.env = `"NEW=a,b",EMPTY=`
+	env, err = m.createForm.environment()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(env, []string{"NEW=a,b", "EMPTY="}) {
+		t.Fatalf("edited environment ignored: %q", env)
+	}
+	m.createForm.env = ""
+	env, err = m.createForm.environment()
+	if err != nil || len(env) != 0 {
+		t.Fatalf("environment not cleared: %q, %v", env, err)
+	}
+}
