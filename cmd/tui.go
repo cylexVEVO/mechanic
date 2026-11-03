@@ -1,6 +1,8 @@
 package cmd
 
 import (
+	"bytes"
+	"encoding/csv"
 	"fmt"
 	"os"
 	"sort"
@@ -52,6 +54,7 @@ type tuiModel struct {
 }
 
 type tuiCreateForm struct {
+	editing     bool
 	field       int
 	name        string
 	command     string
@@ -87,6 +90,7 @@ type tuiLogsMsg struct {
 type tuiCreateMsg struct {
 	name    string
 	created bool
+	edited  bool
 	err     error
 }
 
@@ -153,11 +157,25 @@ func loadTUILogs(name string, system bool) tea.Cmd {
 func runTUICreate(form tuiCreateForm, system bool) tea.Cmd {
 	return func() tea.Msg {
 		var env []string
-		for _, entry := range strings.Split(form.env, ",") {
-			entry = strings.TrimSpace(entry)
-			if entry != "" {
-				env = append(env, entry)
+		if form.env != "" {
+			reader := csv.NewReader(strings.NewReader(form.env))
+			reader.TrimLeadingSpace = true
+			records, err := reader.ReadAll()
+			if err != nil || len(records) != 1 {
+				return tuiCreateMsg{edited: form.editing, err: fmt.Errorf("environment must be one comma-separated record; quote values containing commas")}
 			}
+			env = records[0]
+		}
+		if form.editing {
+			st, err := store.NewForScope(system)
+			if err != nil {
+				return tuiCreateMsg{edited: true, err: err}
+			}
+			svc, err := saveServiceEdit(st, service.NewForScope(system), &store.Service{
+				Name: form.name, Command: form.command, Description: form.description,
+				WorkingDir: strings.TrimSpace(form.workingDir), Restart: store.RestartPolicy(tuiRestartPolicies[form.restart]), Env: env,
+			}, form.start)
+			return tuiCreateMsg{name: form.name, edited: true, created: svc != nil, err: err}
 		}
 		svc, err := createManagedService(createOptions{
 			name:        strings.TrimSpace(form.name),
@@ -271,6 +289,9 @@ func (m tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.creating = false
 		m.createForm = tuiCreateForm{}
 		m.message = "Created: " + msg.name
+		if msg.edited {
+			m.message = "Updated: " + msg.name + ". Restart to apply changes if not restarted now."
+		}
 		return m, loadTUIRows(m.system)
 
 	case tuiLogsMsg:
@@ -315,11 +336,17 @@ func (m tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			if cancel {
 				m.creating = false
 				m.message = "Creation cancelled"
+				if m.createForm.editing {
+					m.message = "Editing cancelled"
+				}
 				return m, nil
 			}
 			if submit {
 				m.busy = true
 				m.createForm.err = "Creating service…"
+				if m.createForm.editing {
+					m.createForm.err = "Saving service…"
+				}
 				return m, runTUICreate(m.createForm, m.system)
 			}
 			return m, nil
@@ -351,6 +378,10 @@ func (m tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			switch key {
 			case "esc", "q", "enter":
 				m.detailOpen = false
+			case "E":
+				if !m.busy && len(m.rows) > 0 {
+					m.openEdit()
+				}
 			case "l":
 				if len(m.rows) > 0 {
 					m.detailOpen = false
@@ -394,7 +425,14 @@ func (m tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.message = "Refreshing…"
 				return m, loadTUIRows(m.system)
 			}
+		case "E":
+			if !m.busy && len(m.rows) > 0 {
+				m.openEdit()
+			}
 		case "c":
+			if m.busy {
+				return m, nil
+			}
 			m.creating = true
 			m.createForm = newTUICreateForm()
 			m.message = ""
@@ -452,9 +490,15 @@ func updateTUICreateForm(form *tuiCreateForm, msg tea.KeyMsg) (submit, cancel bo
 		return true, false
 	case "tab", "down":
 		form.field = (form.field + 1) % 7
+		if form.editing && form.field == 0 {
+			form.field = 1
+		}
 		return false, false
 	case "shift+tab", "up":
 		form.field = (form.field + 6) % 7
+		if form.editing && form.field == 0 {
+			form.field = 6
+		}
 		return false, false
 	case "enter":
 		if form.field == 6 {
@@ -514,6 +558,9 @@ func (f *tuiCreateForm) current() string {
 func (f *tuiCreateForm) setCurrent(value string) {
 	switch f.field {
 	case 0:
+		if f.editing {
+			return
+		}
 		f.name = value
 	case 1:
 		f.command = value
@@ -618,7 +665,7 @@ func (m tuiModel) View() string {
 		b.WriteString(tuiMessageStyle.Render(m.message))
 		b.WriteString("\n")
 	}
-	b.WriteString(tuiMutedStyle.Render("↑/k ↓/j move  c create  enter status  l logs  s start  x stop  R restart  e enable  d remove  r refresh  q quit"))
+	b.WriteString(tuiMutedStyle.Render("↑/k ↓/j move  c create  E edit  enter status  l logs  s start  x stop  R restart  e enable  d remove  r refresh  q quit"))
 	return b.String()
 }
 
@@ -628,7 +675,11 @@ func (m tuiModel) createView() string {
 	if m.system {
 		scope = "system"
 	}
-	b.WriteString(tuiTitleStyle.Render("Create " + scope + " service"))
+	action := "Create"
+	if m.createForm.editing {
+		action = "Edit"
+	}
+	b.WriteString(tuiTitleStyle.Render(action + " " + scope + " service"))
 	b.WriteString("\n\n")
 
 	values := []string{
@@ -641,6 +692,10 @@ func (m tuiModel) createView() string {
 		map[bool]string{true: "yes", false: "no"}[m.createForm.start],
 	}
 	labels := []string{"Name", "Command", "Description", "Working dir", "Environment", "Restart", "Start now"}
+	if m.createForm.editing {
+		labels[0] = "Name (fixed)"
+		labels[6] = "Restart now"
+	}
 	for index, label := range labels {
 		marker := " "
 		value := values[index]
@@ -657,7 +712,7 @@ func (m tuiModel) createView() string {
 		b.WriteString(line)
 		b.WriteString("\n")
 	}
-	b.WriteString(tuiMutedStyle.Render("Environment accepts comma-separated KEY=VALUE entries."))
+	b.WriteString(tuiMutedStyle.Render("Environment: comma-separated KEY=VALUE entries; quote entries containing commas."))
 	b.WriteString("\n\n")
 	if m.createForm.err != "" {
 		b.WriteString(tuiMessageStyle.Render(m.createForm.err))
@@ -712,7 +767,7 @@ func (m tuiModel) detailView() string {
 		b.WriteString(fmt.Sprintf("%-14s %s\n", "Message:", status.Message))
 	}
 	b.WriteString("\n")
-	b.WriteString(tuiMutedStyle.Render("l logs  enter/esc/q back"))
+	b.WriteString(tuiMutedStyle.Render("E edit  l logs  enter/esc/q back"))
 	return b.String()
 }
 
@@ -776,4 +831,24 @@ func maxInt(a, b int) int {
 		return a
 	}
 	return b
+}
+
+func (m *tuiModel) openEdit() {
+	svc := m.rows[m.cursor].service
+	var env bytes.Buffer
+	writer := csv.NewWriter(&env)
+	if len(svc.Env) > 0 {
+		_ = writer.Write(svc.Env)
+		writer.Flush()
+	}
+	form := tuiCreateForm{editing: true, field: 1, name: svc.Name, command: svc.Command,
+		description: svc.Description, workingDir: svc.WorkingDir, env: strings.TrimSuffix(env.String(), "\n")}
+	for i, policy := range tuiRestartPolicies {
+		if policy == string(svc.Restart) {
+			form.restart = i
+		}
+	}
+	m.createForm = form
+	m.creating, m.detailOpen = true, false
+	m.message = ""
 }

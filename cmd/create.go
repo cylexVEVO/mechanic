@@ -73,49 +73,11 @@ type createOptions struct {
 }
 
 func createManagedService(options createOptions) (*store.Service, error) {
+	workDir, restartPolicy, err := validateServiceOptions(options)
+	if err != nil {
+		return nil, err
+	}
 	name := options.name
-
-	// Validate name
-	if name == "" {
-		return nil, fmt.Errorf("service name is required")
-	}
-	if len(name) > 63 {
-		return nil, fmt.Errorf("service name must be 63 characters or fewer")
-	}
-	if !nameRe.MatchString(name) {
-		return nil, fmt.Errorf("service name must contain only alphanumeric characters and hyphens, and must start with a letter or digit")
-	}
-	if strings.TrimSpace(options.command) == "" {
-		return nil, fmt.Errorf("service command is required")
-	}
-	for _, entry := range options.env {
-		if !envRe.MatchString(entry) {
-			return nil, fmt.Errorf("invalid environment variable %q: expected KEY=VALUE", entry)
-		}
-	}
-
-	// Validate restart policy
-	var restartPolicy store.RestartPolicy
-	switch options.restart {
-	case "always":
-		restartPolicy = store.RestartAlways
-	case "on-failure":
-		restartPolicy = store.RestartOnFailure
-	case "never":
-		restartPolicy = store.RestartNever
-	default:
-		return nil, fmt.Errorf("invalid restart policy '%s': must be always, on-failure, or never", options.restart)
-	}
-
-	// Default working dir to home
-	workDir := options.workingDir
-	if workDir == "" {
-		home, err := os.UserHomeDir()
-		if err != nil {
-			return nil, fmt.Errorf("could not determine home directory: %w", err)
-		}
-		workDir = home
-	}
 
 	// Load store
 	st, err := store.NewForScope(options.system)
@@ -159,4 +121,52 @@ func createManagedService(options createOptions) (*store.Service, error) {
 	}
 
 	return svc, nil
+}
+
+func validateServiceOptions(options createOptions) (string, store.RestartPolicy, error) {
+	name := options.name
+
+	// Validate name
+	if name == "" {
+		return "", "", fmt.Errorf("service name is required")
+	}
+	if len(name) > 63 {
+		return "", "", fmt.Errorf("service name must be 63 characters or fewer")
+	}
+	if !nameRe.MatchString(name) {
+		return "", "", fmt.Errorf("service name must contain only alphanumeric characters and hyphens, and must start with a letter or digit")
+	}
+	if strings.TrimSpace(options.command) == "" {
+		return "", "", fmt.Errorf("service command is required")
+	}
+	for _, entry := range options.env {
+		if !envRe.MatchString(entry) {
+			return "", "", fmt.Errorf("invalid environment variable %q: expected KEY=VALUE", entry)
+		}
+	}
+
+	// Validate restart policy
+	var restartPolicy store.RestartPolicy
+	switch options.restart {
+	case "always":
+		restartPolicy = store.RestartAlways
+	case "on-failure":
+		restartPolicy = store.RestartOnFailure
+	case "never":
+		restartPolicy = store.RestartNever
+	default:
+		return "", "", fmt.Errorf("invalid restart policy '%s': must be always, on-failure, or never", options.restart)
+	}
+
+	// Default working dir to home
+	workDir := options.workingDir
+	if workDir == "" {
+		home, err := os.UserHomeDir()
+		if err != nil {
+			return "", "", fmt.Errorf("could not determine home directory: %w", err)
+		}
+		workDir = home
+	}
+
+	return workDir, restartPolicy, nil
 }

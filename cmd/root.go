@@ -29,6 +29,7 @@ func init() {
 	rootCmd.PersistentFlags().BoolVar(&systemScope, "system", false, "Manage system-wide services (requires root)")
 	rootCmd.AddCommand(
 		createCmd,
+		newEditCmd(),
 		listCmd,
 		startCmd,
 		stopCmd,
